@@ -1,0 +1,16 @@
+{
+    "name": "com.anatawa12.vrc-constraints-converter.editor",
+    "rootNamespace": "Anatawa12.VRCConstraintsConverter",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

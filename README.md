@@ -10,7 +10,7 @@ In the tool window, you can exclude some folders or assets from the conversion p
 
 (planned)
 
-1. Open the tool window: `Window > Project-wide VRC Constraints Converter`
+1. Open the tool window: `Tools > Project-wide VRC Constraints Converter`
 2. Click the `Find Constraint assets` button to find all assets in your project that have Unity constraints.
    This may take a while depending on the size of your project.
 3. See list of files that will be converted.
