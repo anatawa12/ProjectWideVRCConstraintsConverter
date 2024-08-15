@@ -1072,7 +1072,13 @@ namespace Anatawa12.VRCConstraintsConverter
                 toggleRect.x += GetContentIndent(args.item);
                 toggleRect.width = toggleWidth;
                 if (toggleRect.xMax < args.rowRect.xMax)
+                {
+                    var alt = Event.current.alt;
+                    var oldEnabled = item.enabled;
                     item.enabled = EditorGUI.Toggle(toggleRect, item.enabled);
+                    // changed while holding alt key, change all children
+                    if (oldEnabled != item.enabled && alt) item.SetEnableRecursive(item.enabled);
+                }
 
                 // space to toggle checkbox
                 if (args.selected)
@@ -1081,6 +1087,11 @@ namespace Anatawa12.VRCConstraintsConverter
                     if (e is { type: EventType.KeyDown, keyCode: KeyCode.Space })
                     {
                         item.enabled = !item.enabled;
+                        if (e.alt)
+                        {
+                            // set all children
+                            item.SetEnableRecursive(item.enabled);
+                        }
                         Event.current.Use();
                     }
                 }
@@ -1110,6 +1121,14 @@ namespace Anatawa12.VRCConstraintsConverter
                         if (readOnly) return false;
                         return true;
                     }
+                }
+
+                public void SetEnableRecursive(bool value)
+                {
+                    enabled = value;
+                    if (children != null)
+                        foreach (var child in children.Cast<AssetTreeViewItem>())
+                            child.SetEnableRecursive(value);
                 }
             }
         }
