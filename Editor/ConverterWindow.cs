@@ -36,6 +36,9 @@ namespace Anatawa12.VRCConstraintsConverter
         List<ErrorForObject> errors = new();
 
         bool removeUnityConstraintProperties = true;
+        bool convertScenes = true;
+        bool convertPrefabs = true;
+        bool convertAnimationClips = true;
 
         private void OnEnable()
         {
@@ -79,84 +82,52 @@ namespace Anatawa12.VRCConstraintsConverter
 
         void ControlArea()
         {
-            if (GUILayout.Button("Search for files"))
+            if (GUILayout.Button("Search files to convert"))
             {
                 assetsToConvert = FindAssetsForConversion();
             }
 
+            GUILayout.Label("Options:");
+
+            convertScenes = EditorGUILayout.ToggleLeft("Convert Scenes", convertScenes);
+            convertPrefabs = EditorGUILayout.ToggleLeft("Convert Prefabs", convertPrefabs);
+            convertAnimationClips = EditorGUILayout.ToggleLeft("Convert Animation Clips", convertAnimationClips);
+
+            EditorGUI.BeginDisabledGroup(!convertAnimationClips);
+            EditorGUI.indentLevel++;
             removeUnityConstraintProperties = EditorGUILayout.ToggleLeft(
                 "Remove Unity Constraint Properties from Animation Clips", removeUnityConstraintProperties);
+            EditorGUI.indentLevel--;
+            EditorGUI.EndDisabledGroup();
+
             using (new EditorGUI.DisabledScope(assetsToConvert.Length == 0))
             {
-                if (GUILayout.Button("Convert Everything in list below"))
+                if (GUILayout.Button("Convert"))
                 {
                     if (AskForBackup())
                     {
                         errors.Clear();
-                        using var sceneRestore = new RestoreOpeningScenes();
+
+                        using var sceneRestore = convertScenes ? new RestoreOpeningScenes() : null;
 
                         Undo.IncrementCurrentGroup();
                         var group = Undo.GetCurrentGroup();
                         var assets = ActiveResults();
+
+                        if (!convertScenes) assets = assets.Where(x => x.Type != AsseetType.Scene).ToArray();
+                        if (!convertPrefabs) assets = assets.Where(x => x.Type != AsseetType.Prefab).ToArray();
+                        if (!convertAnimationClips) assets = assets.Where(x => x.Type != AsseetType.Asset).ToArray();
+
                         var total = assets.Length;
-                        using var callback = new SimpleProgressCallback("Converting Everything", total);
+
+                        using var callback = new SimpleProgressCallback("Converting Assets", total);
 
                         ConvertPrefab(assets, callback.OnProgress);
                         ConvertScenes(assets, callback.OnProgress);
                         ConvertAnimationClips(assets, callback.OnProgress);
 
                         Undo.CollapseUndoOperations(group);
-                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Everything)");
-                    }
-                }
-
-                if (GUILayout.Button("Convert Animation Clips in list below"))
-                {
-                    if (AskForBackup())
-                    {
-                        errors.Clear();
-                        Undo.IncrementCurrentGroup();
-                        var group = Undo.GetCurrentGroup();
-                        var assets = ActiveResults();
-                        var total = assets.Count(x => x.Type == AsseetType.Asset);
-                        using var callback = new SimpleProgressCallback("Converting Animation Clips", total);
-                        ConvertAnimationClips(assets, callback.OnProgress);
-                        Undo.CollapseUndoOperations(group);
-                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Animation Clips)");
-                    }
-                }
-
-                if (GUILayout.Button("Convert Prefabs in list below"))
-                {
-                    if (AskForBackup())
-                    {
-                        errors.Clear();
-                        Undo.IncrementCurrentGroup();
-                        var group = Undo.GetCurrentGroup();
-                        var assets = ActiveResults();
-                        var total = assets.Count(x => x.Type == AsseetType.Prefab);
-                        using var callback = new SimpleProgressCallback("Converting Prefabs", total);
-                        ConvertPrefab(assets, callback.OnProgress);
-                        Undo.CollapseUndoOperations(group);
-                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Prefabs)");
-                    }
-                }
-
-                if (GUILayout.Button("Convert Scenes in list below"))
-                {
-                    if (AskForBackup())
-                    {
-                        errors.Clear();
-                        using var sceneRestore = new RestoreOpeningScenes();
-
-                        Undo.IncrementCurrentGroup();
-                        var group = Undo.GetCurrentGroup();
-                        var assets = ActiveResults();
-                        var total = assets.Count(x => x.Type == AsseetType.Scene);
-                        using var callback = new SimpleProgressCallback("Converting Scenes", total);
-                        ConvertScenes(assets, callback.OnProgress);
-                        Undo.CollapseUndoOperations(group);
-                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Scenes)");
+                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
                     }
                 }
             }
@@ -174,7 +145,7 @@ namespace Anatawa12.VRCConstraintsConverter
 
             if (assetsToConvert.Length != 0)
             {
-                var height = EditorGUILayout.GetControlRect(false, position.height / 2);
+                var height = EditorGUILayout.GetControlRect(false, assetsTreeView.totalHeight);
                 assetsTreeView.OnGUI(height);
             }
             else
@@ -201,9 +172,9 @@ namespace Anatawa12.VRCConstraintsConverter
         #region Debug Area
 
         private bool openDebugMenu;
-        private AnimationClip clip;
-        private GameObject gameObject;
-        private Behaviour constraint;
+        private AnimationClip? clip;
+        private GameObject? gameObject;
+        private Behaviour? constraint;
 
         void DebugArea()
         {
