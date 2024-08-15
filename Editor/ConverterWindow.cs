@@ -1,3 +1,5 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -22,28 +24,62 @@ namespace Anatawa12.VRCConstraintsConverter
 
         Vector2 scrollPosition;
         Vector2 errorScrollPosition;
-        FindResult[] assetsToConvert;
-        List<ErrorForObject> errors;
+        FindResult[] assetsToConvert = Array.Empty<FindResult>();
+        List<ErrorForObject> errors = new();
 
-        TimeSpan lastSearchTime;
+        bool removeUnityConstraintProperties;
 
-        private bool openDebugMenu;
-        private AnimationClip clip;
-        private GameObject gameObject;
-        private Behaviour constraint;
 
         private void OnGUI()
         {
-            // TODO
+            ControlArea();
+
+            EditorGUILayout.LabelField("Assets to be proceed:");
+            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
+            EditorGUI.indentLevel++;
+            AssetList();
+            EditorGUI.indentLevel--;
+            EditorGUILayout.EndScrollView();
+
+            EditorGUILayout.LabelField("Errors from previous process:");
+            errorScrollPosition = EditorGUILayout.BeginScrollView(errorScrollPosition);
+            EditorGUI.indentLevel++;
+            ErrorList();
+            EditorGUI.indentLevel--;
+            EditorGUILayout.EndScrollView();
+
+            GUILayout.FlexibleSpace();
+        }
+
+        void ControlArea()
+        {
             if (GUILayout.Button("Search for files"))
             {
-                OnSearchFiles();
+                assetsToConvert = FindAssetsForConversion();
             }
 
-            EditorGUILayout.LabelField($"Last search time: {lastSearchTime}");
-            scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
-            assetsToConvert ??= Array.Empty<FindResult>();
-            if (assetsToConvert != null)
+            removeUnityConstraintProperties = EditorGUILayout.ToggleLeft(
+                "Remove Unity Constraint Properties from Animation Clips", removeUnityConstraintProperties);
+            using (new EditorGUI.DisabledScope(assetsToConvert.Length == 0))
+            {
+                if (GUILayout.Button("Convert Animation Clips in list below"))
+                {
+                    if (AskForBackup())
+                    {
+                        errors.Clear();
+                        var total = assetsToConvert.Count(x => x.Type == AsseetType.Asset);
+                        using var callback = new SimpleProgressCallback("Converting Animation Clips", total);
+                        ConvertAnimationClips(callback.OnProgress);
+                    }
+                }
+            }
+
+            DebugArea();
+        }
+
+        void AssetList()
+        {
+            if (assetsToConvert.Length != 0)
             {
                 foreach (var file in assetsToConvert)
                 {
@@ -51,91 +87,105 @@ namespace Anatawa12.VRCConstraintsConverter
                     EditorGUILayout.LabelField(file.Path);
                 }
             }
-
-            EditorGUILayout.EndScrollView();
-
-            EditorGUILayout.LabelField("Errors:");
-            errorScrollPosition = EditorGUILayout.BeginScrollView(errorScrollPosition);
-            errors ??= new List<ErrorForObject>();
-            foreach (var error in errors)
+            else
             {
-                EditorGUILayout.LabelField($"{error.obj.name}: {error.error}");
+                EditorGUILayout.LabelField("Nothing to convert");
             }
+        }
 
-            if (errors.Count == 0)
+        void ErrorList()
+        {
+            if (errors.Count != 0)
+            {
+                foreach (var error in errors)
+                {
+                    EditorGUILayout.LabelField(error.obj.name + ": " + error.error);
+                }
+            }
+            else
             {
                 EditorGUILayout.LabelField("No errors at this time");
             }
+        }
 
-            EditorGUILayout.EndScrollView();
+        #region Debug Area
 
-            if (GUILayout.Button("Convert Animation Clips"))
+        private bool openDebugMenu;
+        private AnimationClip clip;
+        private GameObject gameObject;
+        private Behaviour constraint;
+
+        void DebugArea()
+        {
+            openDebugMenu = EditorGUILayout.Foldout(openDebugMenu, "Debug");
+            if (!openDebugMenu) return;
+
+            clip = EditorGUILayout.ObjectField("Clip", clip, typeof(AnimationClip), false) as AnimationClip;
+            if (clip != null)
             {
-                foreach (var asset in assetsToConvert)
+                if (GUILayout.Button("Convert Animation Clip keeping Unity Constraints binding"))
                 {
-                    if (asset.Type != AsseetType.Asset) continue;
-                    foreach (var obj in asset.Objects)
-                    {
-                        if (obj is AnimationClip animationClip)
-                        {
-                            Undo.RecordObject(animationClip, "Convert Unity Constraints to VRC Constraints");
-                            ConvertAnimationClip(animationClip, true);
-                        }
-                    }
+                    Undo.RecordObject(clip, "Convert Unity Constraints to VRC Constraints");
+                    ConvertAnimationClip(clip, false);
+                }
+
+                if (GUILayout.Button("Convert Animation Clip"))
+                {
+                    Undo.RecordObject(clip,
+                        "Convert Unity Constraints to VRC Constraints with removing old properties");
+                    ConvertAnimationClip(clip, true);
                 }
             }
 
-            openDebugMenu = EditorGUILayout.Foldout(openDebugMenu, "Debug");
-            if (openDebugMenu)
+            gameObject = EditorGUILayout.ObjectField("GameObject", gameObject, typeof(GameObject), true) as GameObject;
+            if (gameObject)
             {
-                clip = EditorGUILayout.ObjectField("Clip", clip, typeof(AnimationClip), false) as AnimationClip;
-                if (clip != null)
+                if (GUILayout.Button("Convert Whole GameObject"))
                 {
-                    if (GUILayout.Button("Convert Animation Clip keeping Unity Constraints binding"))
-                    {
-                        Undo.RecordObject(clip, "Convert Unity Constraints to VRC Constraints");
-                        ConvertAnimationClip(clip, false);
-                    }
-
-                    if (GUILayout.Button("Convert Animation Clip"))
-                    {
-                        Undo.RecordObject(clip,
-                            "Convert Unity Constraints to VRC Constraints with removing old properties");
-                        ConvertAnimationClip(clip, true);
-                    }
+                    Undo.IncrementCurrentGroup();
+                    var group = Undo.GetCurrentGroup();
+                    ConvertGameObject(gameObject);
+                    Undo.CollapseUndoOperations(group);
+                    Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
                 }
+            }
 
-                gameObject = EditorGUILayout.ObjectField("GameObject", gameObject, typeof(GameObject), true) as GameObject;
-                if (gameObject)
+            constraint = EditorGUILayout.ObjectField("Constraint", constraint, typeof(IConstraint), true) as Behaviour;
+            if (constraint && constraint is IConstraint iconstraint)
+            {
+                if (GUILayout.Button("Convert Constraint"))
                 {
-                    if (GUILayout.Button("Convert Whole GameObject"))
-                    {
-                        Undo.IncrementCurrentGroup();
-                        var group = Undo.GetCurrentGroup();
-                        ConvertGameObject(gameObject);
-                        Undo.CollapseUndoOperations(group);
-                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
-                    }
-                }
-
-                constraint = EditorGUILayout.ObjectField("Constraint", constraint, typeof(IConstraint), true) as Behaviour;
-                if (constraint && constraint is IConstraint iconstraint)
-                {
-                    if (GUILayout.Button("Convert Constraint"))
-                    {
-                        Undo.RecordObject(constraint, "Convert Unity Constraints to VRC Constraints");
-                        ConvertConstraint(iconstraint);
-                    }
+                    Undo.RecordObject(constraint, "Convert Unity Constraints to VRC Constraints");
+                    ConvertConstraint(iconstraint);
                 }
             }
         }
 
-        void OnSearchFiles()
+        #endregion
+
+        bool AskForBackup()
         {
-            var stopwatch = Stopwatch.StartNew();
-            assetsToConvert = FindAssetsForConversion();
-            stopwatch.Stop();
-            lastSearchTime = stopwatch.Elapsed;
+            return EditorUtility.DisplayDialog("Backup your project!",
+                "Please backup your project before converting constraints.\n" +
+                "This tool will modify your project files and it may cause data loss.\n" +
+                "Do you want to continue?", "Yes Convert!", "No, I'll backup");
+        }
+
+        void ConvertAnimationClips(Action<string>? onProgress = null)
+        {
+            foreach (var asset in assetsToConvert)
+            {
+                if (asset.Type != AsseetType.Asset) continue;
+                onProgress?.Invoke(asset.Path);
+                foreach (var obj in asset.Objects)
+                {
+                    if (obj is AnimationClip animationClip)
+                    {
+                        Undo.RecordObject(animationClip, "Convert Unity Constraints to VRC Constraints");
+                        ConvertAnimationClip(animationClip, removeUnityConstraintProperties);
+                    }
+                }
+            }
         }
 
         #region Find Assets For Conversion
@@ -634,9 +684,39 @@ namespace Anatawa12.VRCConstraintsConverter
                 .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
                 .First(e => e.Name == "MoveComponentRelativeToComponent" && e.GetParameters().Length == 3);
 
-        internal static void MoveComponentRelativeToComponent(Component component, Component targetComponent, bool aboveTarget)
+        internal static void MoveComponentRelativeToComponent(Component component, Component targetComponent,
+            bool aboveTarget)
         {
-            MoveComponentRelativeToComponentMethodInfo.Invoke(null, new object[] { component, targetComponent, aboveTarget });
+            MoveComponentRelativeToComponentMethodInfo.Invoke(null,
+                new object[] { component, targetComponent, aboveTarget });
+        }
+
+        #endregion
+
+        #region Progress Support
+
+        class SimpleProgressCallback : IDisposable
+        {
+            private readonly int _total;
+            private readonly string _title;
+            private int _current;
+
+            public SimpleProgressCallback(string title, int total)
+            {
+                _title = title;
+                _total = total;
+            }
+
+            public void Dispose()
+            {
+                EditorUtility.ClearProgressBar();
+            }
+
+            public void OnProgress(string obj)
+            {
+                _current++;
+                EditorUtility.DisplayProgressBar(_title, obj, (float)_current / _total);
+            }
         }
 
         #endregion
