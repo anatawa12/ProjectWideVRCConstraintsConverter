@@ -344,6 +344,7 @@ namespace Anatawa12.VRCConstraintsConverter
                         case ".asset":
                         case ".controller":
                         case ".mesh":
+                        case ".anim":
                             // for asset files, we check if the asset contains animation clips animating constraints
                             var assetFiles = AssetDatabase.LoadAllAssetsAtPath(assetPath).Where(ShouldConvertAssetFile)
                                 .ToArray();
