@@ -85,7 +85,8 @@ namespace Anatawa12.VRCConstraintsConverter
                 {
                     var neededParentVisit = false;
 
-                    foreach (var vertexParent in vertex.Parents.Where(vertexParent => !visitedVertices.Contains(vertexParent)))
+                    foreach (var vertexParent in vertex.Parents.Where(vertexParent =>
+                                 !visitedVertices.Contains(vertexParent)))
                     {
                         neededParentVisit = true;
                         openSet.Enqueue(vertexParent);
@@ -111,6 +112,12 @@ namespace Anatawa12.VRCConstraintsConverter
                 throw new Exception($"Invalid DAG state: node '{vertex.Prefab}' was not visited.");
 
             return sortedVertices;
+        }
+
+        public static bool IsInReadOnlyPackage(string path)
+        {
+            var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path);
+            return packageInfo is { source: not (PackageSource.Embedded or PackageSource.Local) };
         }
     }
 }

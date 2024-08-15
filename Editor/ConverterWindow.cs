@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditor.IMGUI.Controls;
 using UnityEditor.PackageManager;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -18,6 +19,7 @@ using VRC.Dynamics;
 using VRC.SDK3.Dynamics.Constraint.Components;
 using Debug = UnityEngine.Debug;
 using Object = UnityEngine.Object;
+using TreeView = UnityEditor.IMGUI.Controls.TreeView;
 
 namespace Anatawa12.VRCConstraintsConverter
 {
@@ -29,10 +31,26 @@ namespace Anatawa12.VRCConstraintsConverter
         Vector2 scrollPosition;
         Vector2 errorScrollPosition;
         FindResult[] assetsToConvert = Array.Empty<FindResult>();
+        [SerializeField] TreeViewState assetsTreeViewState = null!;
+        AssetsTreeView? assetsTreeView;
         List<ErrorForObject> errors = new();
 
         bool removeUnityConstraintProperties = true;
 
+        private void OnEnable()
+        {
+            // ReSharper disable once ConditionIsAlwaysTrueOrFalseAccordingToNullableAPIContract
+            if (assetsTreeViewState == null)
+                assetsTreeViewState = new TreeViewState();
+            assetsTreeView = new AssetsTreeView(assetsTreeViewState);
+        }
+
+        private FindResult[] ActiveResults()
+        {
+            if (assetsToConvert != assetsTreeView?.Assets)
+                throw new InvalidOperationException("assetsToConvert != assetsTreeView.Assets");
+            return assetsTreeView.GetEnabledAssets();
+        }
 
         private void OnGUI()
         {
@@ -79,12 +97,13 @@ namespace Anatawa12.VRCConstraintsConverter
 
                         Undo.IncrementCurrentGroup();
                         var group = Undo.GetCurrentGroup();
-                        var total = assetsToConvert.Length;
+                        var assets = ActiveResults();
+                        var total = assets.Length;
                         using var callback = new SimpleProgressCallback("Converting Everything", total);
 
-                        ConvertPrefab(callback.OnProgress);
-                        ConvertScenes(callback.OnProgress);
-                        ConvertAnimationClips(callback.OnProgress);
+                        ConvertPrefab(assets, callback.OnProgress);
+                        ConvertScenes(assets, callback.OnProgress);
+                        ConvertAnimationClips(assets, callback.OnProgress);
 
                         Undo.CollapseUndoOperations(group);
                         Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Everything)");
@@ -98,9 +117,10 @@ namespace Anatawa12.VRCConstraintsConverter
                         errors.Clear();
                         Undo.IncrementCurrentGroup();
                         var group = Undo.GetCurrentGroup();
-                        var total = assetsToConvert.Count(x => x.Type == AsseetType.Asset);
+                        var assets = ActiveResults();
+                        var total = assets.Count(x => x.Type == AsseetType.Asset);
                         using var callback = new SimpleProgressCallback("Converting Animation Clips", total);
-                        ConvertAnimationClips(callback.OnProgress);
+                        ConvertAnimationClips(assets, callback.OnProgress);
                         Undo.CollapseUndoOperations(group);
                         Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Animation Clips)");
                     }
@@ -113,9 +133,10 @@ namespace Anatawa12.VRCConstraintsConverter
                         errors.Clear();
                         Undo.IncrementCurrentGroup();
                         var group = Undo.GetCurrentGroup();
-                        var total = assetsToConvert.Count(x => x.Type == AsseetType.Prefab);
+                        var assets = ActiveResults();
+                        var total = assets.Count(x => x.Type == AsseetType.Prefab);
                         using var callback = new SimpleProgressCallback("Converting Prefabs", total);
-                        ConvertPrefab(callback.OnProgress);
+                        ConvertPrefab(assets, callback.OnProgress);
                         Undo.CollapseUndoOperations(group);
                         Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Prefabs)");
                     }
@@ -130,9 +151,10 @@ namespace Anatawa12.VRCConstraintsConverter
 
                         Undo.IncrementCurrentGroup();
                         var group = Undo.GetCurrentGroup();
-                        var total = assetsToConvert.Count(x => x.Type == AsseetType.Scene);
+                        var assets = ActiveResults();
+                        var total = assets.Count(x => x.Type == AsseetType.Scene);
                         using var callback = new SimpleProgressCallback("Converting Scenes", total);
-                        ConvertScenes(callback.OnProgress);
+                        ConvertScenes(assets, callback.OnProgress);
                         Undo.CollapseUndoOperations(group);
                         Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Scenes)");
                     }
@@ -144,14 +166,16 @@ namespace Anatawa12.VRCConstraintsConverter
 
         void AssetList()
         {
+            if (assetsTreeView!.Assets != assetsToConvert)
+            {
+                assetsTreeView.Assets = assetsToConvert;
+                assetsTreeView.Reload();
+            }
+
             if (assetsToConvert.Length != 0)
             {
-                foreach (var file in assetsToConvert)
-                {
-                    // TODO: show in a better way (like tree view)
-                    using var scope = new EditorGUI.DisabledScope(!file.IsConvertible);
-                    EditorGUILayout.LabelField(file.Path);
-                }
+                var height = EditorGUILayout.GetControlRect(false, position.height / 2);
+                assetsTreeView.OnGUI(height);
             }
             else
             {
@@ -237,9 +261,9 @@ namespace Anatawa12.VRCConstraintsConverter
                 "Do you want to continue?", "Yes Convert!", "No, I'll backup");
         }
 
-        void ConvertAnimationClips(Action<string>? onProgress = null)
+        void ConvertAnimationClips(FindResult[] assets, Action<string>? onProgress = null)
         {
-            foreach (var asset in assetsToConvert)
+            foreach (var asset in assets)
             {
                 if (asset.Type != AsseetType.Asset) continue;
                 onProgress?.Invoke(asset.Path);
@@ -255,9 +279,9 @@ namespace Anatawa12.VRCConstraintsConverter
             }
         }
 
-        void ConvertPrefab(Action<string>? onProgress = null)
+        void ConvertPrefab(FindResult[] assets, Action<string>? onProgress = null)
         {
-            var prefabAssets = assetsToConvert.Where(x => x.Type == AsseetType.Prefab).ToArray();
+            var prefabAssets = assets.Where(x => x.Type == AsseetType.Prefab).ToArray();
             var resultByPrefab = prefabAssets.ToDictionary(x => x.GameObject, x => x);
             var sorted = Utility.SortPrefabsParentToChild(prefabAssets.Select(x => x.GameObject));
 
@@ -272,9 +296,9 @@ namespace Anatawa12.VRCConstraintsConverter
             }
         }
 
-        void ConvertScenes(Action<string>? onProgress = null)
+        void ConvertScenes(FindResult[] assets, Action<string>? onProgress = null)
         {
-            foreach (var asset in assetsToConvert)
+            foreach (var asset in assets)
             {
                 if (asset.Type != AsseetType.Scene) continue;
                 onProgress?.Invoke(asset.Path);
@@ -301,16 +325,7 @@ namespace Anatawa12.VRCConstraintsConverter
 
             public GameObject GameObject => (GameObject)Objects[0];
 
-            public bool IsConvertible
-            {
-                get
-                {
-                    var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(Path);
-                    var readOnlyPackage = packageInfo is
-                        { source: not (PackageSource.Embedded or PackageSource.Local) };
-                    return !readOnlyPackage;
-                }
-            }
+            public bool IsConvertible => !Utility.IsInReadOnlyPackage(Path);
 
             public static FindResult Scene(string assetPath) => new() { Path = assetPath, Type = AsseetType.Scene };
 
@@ -867,6 +882,181 @@ namespace Anatawa12.VRCConstraintsConverter
                     EditorSceneManager.OpenScene(_openingScenePaths[0]);
                     foreach (var openingScenePath in _openingScenePaths.Skip(1))
                         EditorSceneManager.OpenScene(openingScenePath, OpenSceneMode.Additive);
+                }
+            }
+        }
+
+        #endregion
+
+        #region AssetsTreeView
+
+        class AssetsTreeView : TreeView
+        {
+            public FindResult[] Assets;
+
+            private const int toggleWidth = 30;
+
+            public AssetsTreeView(TreeViewState state) : base(state)
+            {
+                extraSpaceBeforeIconAndLabel = toggleWidth;
+            }
+
+            private IEnumerable<FindResult> FindAllEnabledItems()
+            {
+                var stack = new Stack<AssetTreeViewItem>();
+                foreach (var item in rootItem.children.Cast<AssetTreeViewItem>())
+                    stack.Push(item);
+                while (stack.Count > 0)
+                {
+                    var assetItem = stack.Pop();
+                    if (assetItem.readOnly || !assetItem.enabled)
+                        continue;
+
+                    if (assetItem.AssetInfo != null)
+                        yield return assetItem.AssetInfo;
+
+                    if (assetItem.children != null)
+                        foreach (var child in assetItem.children)
+                            stack.Push((AssetTreeViewItem)child);
+                }
+            }
+
+            public FindResult[] GetEnabledAssets() => FindAllEnabledItems().ToArray();
+
+            protected override TreeViewItem BuildRoot()
+            {
+                var root = new TreeViewItem { id = 0, depth = -1, displayName = "Root" };
+
+                var id = 1;
+
+                var directoryTreeItems = new Dictionary<string, AssetTreeViewItem>();
+
+                AssetTreeViewItem GetItem(string path)
+                {
+                    if (directoryTreeItems.TryGetValue(path, out var item))
+                        return item;
+
+                    var slashIndex = path.LastIndexOf('/');
+                    TreeViewItem parent;
+                    string name;
+                    if (slashIndex == -1)
+                    {
+                        parent = root;
+                        name = path;
+                    }
+                    else
+                    {
+                        var parentPath = path.Substring(0, slashIndex);
+                        parent = GetItem(parentPath);
+                        name = path.Substring(slashIndex + 1);
+                    }
+                    var readOnly = Utility.IsInReadOnlyPackage(path);
+                    item = new AssetTreeViewItem
+                    {
+                        id = id++,
+                        displayName = name,
+                        enabled = !readOnly,
+                        readOnly = readOnly,
+                    };
+                    parent.AddChild(item);
+                    directoryTreeItems[path] = item;
+                    return item;
+                }
+
+                foreach (var asset in Assets)
+                    GetItem(asset.Path).AssetInfo = asset;
+
+                // flatten tree if only one child
+                void FlattenTree(TreeViewItem item)
+                {
+                    if (item.children == null) return;
+                    if (item.children.Count == 1)
+                    {
+                        var child = item.children[0];
+                        item.displayName += "/" + child.displayName;
+                        item.children = child.children;
+                        child.children = null;
+                        FlattenTree(item);
+                    }
+                    else
+                    {
+                        foreach (var child in item.children)
+                            FlattenTree(child);
+                    }
+                }
+
+                foreach (var child in root.children)
+                    FlattenTree(child);
+
+                // finally calculate depth
+
+                void CalculateDepthAndParent(TreeViewItem item)
+                {
+                    if (item.children != null)
+                    {
+                        foreach (var child in item.children)
+                        {
+                            child.parent = item;
+                            child.depth = item.depth + 1;
+                            CalculateDepthAndParent(child);
+                        }
+                    }
+                }
+
+                CalculateDepthAndParent(root);
+
+                return root;
+            }
+
+            protected override void RowGUI(RowGUIArgs args)
+            {
+                var item = (AssetTreeViewItem)args.item;
+
+                // 切り替えボタンをラベルテキストの左に作成
+
+                EditorGUI.BeginDisabledGroup(!item.IsActive);
+                var toggleRect = args.rowRect;
+                toggleRect.x += GetContentIndent(args.item);
+                toggleRect.width = toggleWidth;
+                if (toggleRect.xMax < args.rowRect.xMax)
+                    item.enabled = EditorGUI.Toggle(toggleRect, item.enabled);
+
+                // space to toggle checkbox
+                if (args.selected)
+                {
+                    var e = Event.current;
+                    if (e is { type: EventType.KeyDown, keyCode: KeyCode.Space })
+                    {
+                        item.enabled = !item.enabled;
+                        Event.current.Use();
+                    }
+                }
+
+                EditorGUI.BeginDisabledGroup(!item.enabled);
+                base.RowGUI(args);
+                EditorGUI.EndDisabledGroup();
+                EditorGUI.EndDisabledGroup();
+            }
+            
+            class AssetTreeViewItem : TreeViewItem
+            {
+                public bool enabled = true;
+                public bool readOnly = false;
+                public FindResult? AssetInfo;
+
+                public bool IsActive
+                {
+                    get
+                    {
+                        // if parent is not active or enabled, this item is not active
+                        if (parent is AssetTreeViewItem parentItem)
+                        {
+                            if (!parentItem.IsActive) return false;
+                            if (!parentItem.enabled) return false;
+                        }
+                        if (readOnly) return false;
+                        return true;
+                    }
                 }
             }
         }
