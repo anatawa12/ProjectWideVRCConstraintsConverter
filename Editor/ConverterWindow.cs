@@ -13,6 +13,7 @@ using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Animations;
 using UnityEngine.SceneManagement;
+using UnityEngine.UIElements;
 using VRC.Dynamics;
 using VRC.SDK3.Dynamics.Constraint.Components;
 using Debug = UnityEngine.Debug;
@@ -38,6 +39,10 @@ namespace Anatawa12.VRCConstraintsConverter
             ControlArea();
 
             EditorGUILayout.LabelField("Assets to be proceed:");
+            EditorGUILayout.HelpBox(
+                "It's hard to determine if an scene is containing constraints before, so all scenes will be processed.",
+                MessageType.Info
+            );
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
             EditorGUI.indentLevel++;
             AssetList();
@@ -100,7 +105,7 @@ namespace Anatawa12.VRCConstraintsConverter
                         Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Animation Clips)");
                     }
                 }
-                
+
                 if (GUILayout.Button("Convert Prefabs in list below"))
                 {
                     if (AskForBackup())
@@ -275,7 +280,7 @@ namespace Anatawa12.VRCConstraintsConverter
                 onProgress?.Invoke(asset.Path);
                 if (!asset.IsConvertible) continue;
                 var scene = EditorSceneManager.OpenScene(asset.Path, OpenSceneMode.Single);
-                
+
                 var rootGameObjects = scene.GetRootGameObjects();
                 var changed = false;
                 foreach (var rootGameObject in rootGameObjects)
@@ -301,7 +306,8 @@ namespace Anatawa12.VRCConstraintsConverter
                 get
                 {
                     var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(Path);
-                    var readOnlyPackage = packageInfo is { source: not (PackageSource.Embedded or PackageSource.Local) };
+                    var readOnlyPackage = packageInfo is
+                        { source: not (PackageSource.Embedded or PackageSource.Local) };
                     return !readOnlyPackage;
                 }
             }
@@ -847,6 +853,7 @@ namespace Anatawa12.VRCConstraintsConverter
                         throw new InvalidOperationException("Failed to save scenes");
                     }
                 }
+
                 _openingScenePaths = scenes.Select(x => x.path).ToArray();
                 if (_openingScenePaths.Any(string.IsNullOrEmpty))
                     _openingScenePaths = null;
@@ -854,7 +861,8 @@ namespace Anatawa12.VRCConstraintsConverter
 
             public void Dispose()
             {
-                if (EditorUtility.DisplayDialog("Reopen?", "Do you want to reopen previously opened scenes?", "Yes", "No"))
+                if (EditorUtility.DisplayDialog("Reopen?", "Do you want to reopen previously opened scenes?", "Yes",
+                        "No"))
                 {
                     EditorSceneManager.OpenScene(_openingScenePaths[0]);
                     foreach (var openingScenePath in _openingScenePaths.Skip(1))
