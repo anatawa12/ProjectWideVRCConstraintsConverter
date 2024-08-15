@@ -118,12 +118,18 @@ namespace Anatawa12.VRCConstraintsConverter
                         if (!convertPrefabs) assets = assets.Where(x => x.Type != AsseetType.Prefab).ToArray();
                         if (!convertAnimationClips) assets = assets.Where(x => x.Type != AsseetType.Asset).ToArray();
 
-                        var total = assets.Length;
+                        // we have two phase for prefab conversion so twice count for prefab
+                        var total = assets.Length + assets.Count(x => x.Type == AsseetType.Prefab);
 
                         using var callback = new SimpleProgressCallback("Converting Assets", total);
 
-                        ConvertPrefab(assets, callback.OnProgress);
+                        callback.Title = "Converting Assets (Prefab Phase 1)";
+                        ConvertPrefabPhase1(assets, callback.OnProgress);
+                        callback.Title = "Converting Assets (Scenes)";
                         ConvertScenes(assets, callback.OnProgress);
+                        callback.Title = "Converting Assets (Prefab Phase 2)";
+                        ConvertPrefabPhase2(assets, callback.OnProgress);
+                        callback.Title = "Converting Assets (Animation Clips)";
                         ConvertAnimationClips(assets, callback.OnProgress);
 
                         Undo.CollapseUndoOperations(group);
@@ -199,13 +205,14 @@ namespace Anatawa12.VRCConstraintsConverter
             }
 
             gameObject = EditorGUILayout.ObjectField("GameObject", gameObject, typeof(GameObject), true) as GameObject;
-            if (gameObject)
+            if (gameObject != null)
             {
                 if (GUILayout.Button("Convert Whole GameObject"))
                 {
                     Undo.IncrementCurrentGroup();
                     var group = Undo.GetCurrentGroup();
-                    ConvertGameObject(gameObject);
+                    ConvertGameObjectPhase1(gameObject);
+                    ConvertGameObjectPhase2(gameObject);
                     Undo.CollapseUndoOperations(group);
                     Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
                 }
@@ -217,7 +224,7 @@ namespace Anatawa12.VRCConstraintsConverter
                 if (GUILayout.Button("Convert Constraint"))
                 {
                     Undo.RecordObject(constraint, "Convert Unity Constraints to VRC Constraints");
-                    ConvertConstraint(iconstraint);
+                    ConvertConstraintPhase1(iconstraint);
                 }
             }
         }
@@ -250,7 +257,7 @@ namespace Anatawa12.VRCConstraintsConverter
             }
         }
 
-        void ConvertPrefab(FindResult[] assets, Action<string>? onProgress = null)
+        void ConvertPrefabPhase1(FindResult[] assets, Action<string>? onProgress = null)
         {
             var prefabAssets = assets.Where(x => x.Type == AsseetType.Prefab).ToArray();
             var resultByPrefab = prefabAssets.ToDictionary(x => x.GameObject, x => x);
@@ -261,9 +268,25 @@ namespace Anatawa12.VRCConstraintsConverter
                 var result = resultByPrefab[prefabAsset];
                 onProgress?.Invoke(result.Path);
                 if (!result.IsConvertible) continue;
-                var changed = ConvertGameObject(prefabAsset);
+                var changed = ConvertGameObjectPhase1(prefabAsset);
                 if (changed)
                     PrefabUtility.SavePrefabAsset(prefabAsset);
+            }
+        }
+
+        void ConvertPrefabPhase2(FindResult[] assets, Action<string>? onProgress = null)
+        {
+            // in phase 2, we only remove the old constraints with checking if it's prefab instance
+            // so we don't need to sort the prefabs
+            var prefabAssets = assets.Where(x => x.Type == AsseetType.Prefab).ToArray();
+
+            foreach (var result in prefabAssets)
+            {
+                onProgress?.Invoke(result.Path);
+                if (!result.IsConvertible) continue;
+                var changed = ConvertGameObjectPhase2(result.GameObject);
+                if (changed)
+                    PrefabUtility.SavePrefabAsset(result.GameObject);
             }
         }
 
@@ -279,7 +302,11 @@ namespace Anatawa12.VRCConstraintsConverter
                 var rootGameObjects = scene.GetRootGameObjects();
                 var changed = false;
                 foreach (var rootGameObject in rootGameObjects)
-                    changed |= ConvertGameObject(rootGameObject);
+                {
+                    // since they're not prefab, we can just convert them in one phase
+                    changed |= ConvertGameObjectPhase1(rootGameObject);
+                    changed |= ConvertGameObjectPhase2(rootGameObject);
+                }
 
                 if (changed)
                     EditorSceneManager.SaveScene(scene);
@@ -630,20 +657,46 @@ namespace Anatawa12.VRCConstraintsConverter
 
         #region Convert Constraint Component
 
-        static bool ConvertGameObject(GameObject gameObject)
+        static bool ConvertGameObjectPhase1(GameObject gameObject)
+        {
+            Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
+            var constraints = gameObject.GetComponentsInChildren<IConstraint>();
+            var modified = false;
+            foreach (var constraint in constraints)
+                modified |= ConvertConstraintPhase1(constraint);
+            return modified;
+        }
+
+        static bool ConvertGameObjectPhase2(GameObject gameObject)
         {
             Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
             var constraints = gameObject.GetComponentsInChildren<IConstraint>();
             foreach (var constraint in constraints)
-                ConvertConstraint(constraint);
+            {
+                if (!PrefabUtility.IsPartOfPrefabInstance((Component)constraint))
+                    Undo.DestroyObjectImmediate((Behaviour)constraint);
+            }
             return constraints.Length > 0;
         }
 
-        private static void ConvertConstraint(IConstraint constraint)
+        private static bool ConvertConstraintPhase1(IConstraint constraint)
+        {
+            if (PrefabUtility.IsPartOfPrefabInstance((Component)constraint))
+            {
+                return ConvertConstraintPrefabInstance(constraint);
+            }
+            else
+            {
+                ConvertConstraintNew(constraint);
+                return true;
+            }
+        }
+
+        private static void ConvertConstraintNew(IConstraint constraint)
         {
             var oldConstraint = (Behaviour)constraint;
 
-            if (!ConstraintTypeMapping.TryGetValue(oldConstraint.GetType(), out var newType))
+            if (!ConstraintTypeMapping.TryGetValue(constraint.GetType(), out var newType))
             {
                 Debug.LogError("Unsupported constraint type: " + oldConstraint.GetType(), oldConstraint);
                 return;
@@ -655,6 +708,37 @@ namespace Anatawa12.VRCConstraintsConverter
             var newComponent = (VRCConstraintBase)Undo.AddComponent(targetGameObject, newType);
             MoveComponentRelativeToComponent(newComponent, oldConstraint, true);
             Undo.RecordObject(newComponent, "Convert Unity Constraints to VRC Constraints");
+
+            CopyConstraintProperties(constraint, newComponent);
+
+            // we won't remove the old component here
+            // because we need to keep for prefab instance overrides
+        }
+
+        private static bool ConvertConstraintPrefabInstance(IConstraint constraint)
+        {
+            var asBehavior = (Behaviour)constraint;
+            if (!ConstraintTypeMapping.TryGetValue(constraint.GetType(), out var newType))
+            {
+                Debug.LogError("Unsupported constraint type: " + constraint.GetType(), asBehavior);
+                return false;
+            }
+
+            // it's prefab instance, so just update the prefab
+            var newComponent = asBehavior.GetComponents(newType).Cast<VRCConstraintBase>()
+                .First(x => x.TargetTransform == null);
+
+            var instanceRoot = PrefabUtility.GetNearestPrefabInstanceRoot(asBehavior);
+            var changesCount = PrefabUtility.GetObjectOverrides(instanceRoot).Count;
+            CopyConstraintProperties(constraint, newComponent);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(newComponent);
+            var changesCountNew = PrefabUtility.GetObjectOverrides(instanceRoot).Count;
+            return changesCountNew != changesCount;
+        }
+
+        private static void CopyConstraintProperties(IConstraint constraint, VRCConstraintBase newComponent)
+        {
+            var oldConstraint = (Behaviour)constraint;
 
             // copy properties
             // first, Common IConstraint properties
@@ -752,9 +836,6 @@ namespace Anatawa12.VRCConstraintsConverter
                     throw new ArgumentOutOfRangeException(nameof(constraint), constraint.GetType().Name,
                         "Unsupported constraint type");
             }
-
-            // finally, remove old component
-            Undo.DestroyObjectImmediate(oldConstraint);
         }
 
         private static VRCConstraintBase.WorldUpType ToVRChat(AimConstraint.WorldUpType aimWorldUpType)
@@ -803,14 +884,15 @@ namespace Anatawa12.VRCConstraintsConverter
         class SimpleProgressCallback : IDisposable
         {
             private readonly int _total;
-            private readonly string _title;
             private int _current;
 
             public SimpleProgressCallback(string title, int total)
             {
-                _title = title;
+                Title = title;
                 _total = total;
             }
+
+            public string Title { get; set; }
 
             public void Dispose()
             {
@@ -820,7 +902,7 @@ namespace Anatawa12.VRCConstraintsConverter
             public void OnProgress(string obj)
             {
                 _current++;
-                EditorUtility.DisplayProgressBar(_title, obj, (float)_current / _total);
+                EditorUtility.DisplayProgressBar(Title, obj, (float)_current / _total);
             }
         }
 
