@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditor.PackageManager;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Animations;
@@ -143,6 +144,7 @@ namespace Anatawa12.VRCConstraintsConverter
                 foreach (var file in assetsToConvert)
                 {
                     // TODO: show in a better way (like tree view)
+                    using var scope = new EditorGUI.DisabledScope(!file.IsConvertible);
                     EditorGUILayout.LabelField(file.Path);
                 }
             }
@@ -236,6 +238,7 @@ namespace Anatawa12.VRCConstraintsConverter
             {
                 if (asset.Type != AsseetType.Asset) continue;
                 onProgress?.Invoke(asset.Path);
+                if (!asset.IsConvertible) continue;
                 foreach (var obj in asset.Objects)
                 {
                     if (obj is AnimationClip animationClip)
@@ -250,11 +253,14 @@ namespace Anatawa12.VRCConstraintsConverter
         void ConvertPrefab(Action<string>? onProgress = null)
         {
             var prefabAssets = assetsToConvert.Where(x => x.Type == AsseetType.Prefab).ToArray();
+            var resultByPrefab = prefabAssets.ToDictionary(x => x.GameObject, x => x);
             var sorted = Utility.SortPrefabsParentToChild(prefabAssets.Select(x => x.GameObject));
 
             foreach (var prefabAsset in sorted)
             {
-                onProgress?.Invoke(prefabAsset.name);
+                var result = resultByPrefab[prefabAsset];
+                onProgress?.Invoke(result.Path);
+                if (!result.IsConvertible) continue;
                 var changed = ConvertGameObject(prefabAsset);
                 if (changed)
                     PrefabUtility.SavePrefabAsset(prefabAsset);
@@ -267,6 +273,7 @@ namespace Anatawa12.VRCConstraintsConverter
             {
                 if (asset.Type != AsseetType.Scene) continue;
                 onProgress?.Invoke(asset.Path);
+                if (!asset.IsConvertible) continue;
                 var scene = EditorSceneManager.OpenScene(asset.Path, OpenSceneMode.Single);
                 
                 var rootGameObjects = scene.GetRootGameObjects();
@@ -288,6 +295,16 @@ namespace Anatawa12.VRCConstraintsConverter
             public Object[] Objects;
 
             public GameObject GameObject => (GameObject)Objects[0];
+
+            public bool IsConvertible
+            {
+                get
+                {
+                    var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(Path);
+                    var readOnlyPackage = packageInfo is { source: not (PackageSource.Embedded or PackageSource.Local) };
+                    return !readOnlyPackage;
+                }
+            }
 
             public static FindResult Scene(string assetPath) => new() { Path = assetPath, Type = AsseetType.Scene };
 
