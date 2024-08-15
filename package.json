@@ -3,6 +3,8 @@
   "version": "0.1.0-beta.3",
   "displayName": "Project-Wide VRC Constraints Converter",
   "description": "Convert Unity Constraints to VRC Constraints for ALL assets in your project",
+  "documentationUrl": "https://github.com/anatawa12/ProjectWideVRCConstraintsConverter?tab=readme-ov-file",
+  "changelogUrl": "https://github.com/anatawa12/ProjectWideVRCConstraintsConverter?tab=readme-ov-file#notable-changes",
   "vpmDependencies": {
     "com.vrchat.avatars": "^3.7.0-beta.1"
   }
