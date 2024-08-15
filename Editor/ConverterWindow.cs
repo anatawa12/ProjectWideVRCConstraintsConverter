@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
@@ -28,6 +29,8 @@ namespace Anatawa12.VRCConstraintsConverter
 
         private bool openDebugMenu;
         private AnimationClip clip;
+        private GameObject gameObject;
+        private Behaviour constraint;
 
         private void OnGUI()
         {
@@ -88,17 +91,40 @@ namespace Anatawa12.VRCConstraintsConverter
                 clip = EditorGUILayout.ObjectField("Clip", clip, typeof(AnimationClip), false) as AnimationClip;
                 if (clip != null)
                 {
-                    if (GUILayout.Button("Convert"))
+                    if (GUILayout.Button("Convert Animation Clip keeping Unity Constraints binding"))
                     {
                         Undo.RecordObject(clip, "Convert Unity Constraints to VRC Constraints");
                         ConvertAnimationClip(clip, false);
                     }
 
-                    if (GUILayout.Button("Convert and remove old"))
+                    if (GUILayout.Button("Convert Animation Clip"))
                     {
                         Undo.RecordObject(clip,
                             "Convert Unity Constraints to VRC Constraints with removing old properties");
                         ConvertAnimationClip(clip, true);
+                    }
+                }
+
+                gameObject = EditorGUILayout.ObjectField("GameObject", gameObject, typeof(GameObject), true) as GameObject;
+                if (gameObject)
+                {
+                    if (GUILayout.Button("Convert Whole GameObject"))
+                    {
+                        Undo.IncrementCurrentGroup();
+                        var group = Undo.GetCurrentGroup();
+                        ConvertGameObject(gameObject);
+                        Undo.CollapseUndoOperations(group);
+                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
+                    }
+                }
+
+                constraint = EditorGUILayout.ObjectField("Constraint", constraint, typeof(IConstraint), true) as Behaviour;
+                if (constraint && constraint is IConstraint iconstraint)
+                {
+                    if (GUILayout.Button("Convert Constraint"))
+                    {
+                        Undo.RecordObject(constraint, "Convert Unity Constraints to VRC Constraints");
+                        ConvertConstraint(iconstraint);
                     }
                 }
             }
@@ -449,10 +475,170 @@ namespace Anatawa12.VRCConstraintsConverter
 
         #endregion
 
+        #region Convert Constraint Component
+
+        static void ConvertGameObject(GameObject gameObject)
+        {
+            Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
+            foreach (var constraint in gameObject.GetComponentsInChildren<IConstraint>())
+                ConvertConstraint(constraint);
+        }
+
+        private static void ConvertConstraint(IConstraint constraint)
+        {
+            var oldConstraint = (Behaviour)constraint;
+
+            if (!ConstraintTypeMapping.TryGetValue(oldConstraint.GetType(), out var newType))
+            {
+                Debug.LogError("Unsupported constraint type: " + oldConstraint.GetType(), oldConstraint);
+                return;
+            }
+
+            var targetGameObject = oldConstraint.gameObject;
+
+            // add component to position
+            var newComponent = (VRCConstraintBase)Undo.AddComponent(targetGameObject, newType);
+            MoveComponentRelativeToComponent(newComponent, oldConstraint, true);
+            Undo.RecordObject(newComponent, "Convert Unity Constraints to VRC Constraints");
+
+            // copy properties
+            // first, Common IConstraint properties
+            newComponent.enabled = oldConstraint.enabled;
+            newComponent.IsActive = constraint.constraintActive;
+            newComponent.GlobalWeight = constraint.weight;
+            newComponent.Locked = constraint.locked;
+            newComponent.Sources.SetLength(constraint.sourceCount);
+            for (var i = 0; i < constraint.sourceCount; i++)
+            {
+                var source = constraint.GetSource(i);
+                // We have to use new VRCConstraintSource.
+                // if we won't, the source will be replaced with default values on serialization.
+                newComponent.Sources[i] = new VRCConstraintSource(source.sourceTransform, source.weight,
+                    Vector3.zero, Vector3.zero);
+            }
+
+            // then, type specific properties
+            switch (constraint)
+            {
+                case AimConstraint aim:
+                    var newAim = (VRCAimConstraint)newComponent;
+                    newAim.RotationAtRest = aim.rotationAtRest;
+                    newAim.RotationOffset = aim.rotationOffset;
+                    newAim.AffectsRotationX = (aim.rotationAxis & Axis.X) != 0;
+                    newAim.AffectsRotationY = (aim.rotationAxis & Axis.Y) != 0;
+                    newAim.AffectsRotationZ = (aim.rotationAxis & Axis.Z) != 0;
+                    newAim.AimAxis = aim.aimVector;
+                    newAim.UpAxis = aim.upVector;
+                    newAim.WorldUpVector = aim.worldUpVector;
+                    newAim.WorldUpTransform = aim.worldUpObject;
+                    newAim.WorldUp = ToVRChat(aim.worldUpType);
+                    break;
+                case LookAtConstraint lookAt:
+                    var newLookAt = (VRCLookAtConstraint)newComponent;
+                    newLookAt.Roll = lookAt.roll;
+                    newLookAt.RotationAtRest = lookAt.rotationAtRest;
+                    newLookAt.RotationOffset = lookAt.rotationOffset;
+                    newLookAt.WorldUpTransform = lookAt.worldUpObject;
+                    newLookAt.UseUpTransform = lookAt.useUpObject;
+                    break;
+                case ParentConstraint parent:
+                    var newParent = (VRCParentConstraint)newComponent;
+                    newParent.PositionAtRest = parent.translationAtRest;
+                    newParent.RotationAtRest = parent.rotationAtRest;
+                    var positionOffsets = parent.translationOffsets;
+                    for (var i = 0; i < Math.Min(newParent.Sources.Count, positionOffsets.Length); i++)
+                    {
+                        var source = newParent.Sources[i];
+                        source.ParentPositionOffset = positionOffsets[i];
+                        newParent.Sources[i] = source;
+                    }
+
+                    var rotationOffsets = parent.rotationOffsets;
+                    for (var i = 0; i < Math.Min(newParent.Sources.Count, rotationOffsets.Length); i++)
+                    {
+                        var source = newParent.Sources[i];
+                        source.ParentRotationOffset = rotationOffsets[i];
+                        newParent.Sources[i] = source;
+                    }
+
+                    newParent.AffectsPositionX = (parent.translationAxis & Axis.X) != 0;
+                    newParent.AffectsPositionY = (parent.translationAxis & Axis.Y) != 0;
+                    newParent.AffectsPositionZ = (parent.translationAxis & Axis.Z) != 0;
+
+                    newParent.AffectsRotationX = (parent.rotationAxis & Axis.X) != 0;
+                    newParent.AffectsRotationY = (parent.rotationAxis & Axis.Y) != 0;
+                    newParent.AffectsRotationZ = (parent.rotationAxis & Axis.Z) != 0;
+                    break;
+                case PositionConstraint position:
+                    var newPosition = (VRCPositionConstraint)newComponent;
+                    newPosition.PositionAtRest = position.translationAtRest;
+                    newPosition.PositionOffset = position.translationOffset;
+                    newPosition.AffectsPositionX = (position.translationAxis & Axis.X) != 0;
+                    newPosition.AffectsPositionY = (position.translationAxis & Axis.Y) != 0;
+                    newPosition.AffectsPositionZ = (position.translationAxis & Axis.Z) != 0;
+                    break;
+                case RotationConstraint rotation:
+                    var newRotation = (VRCRotationConstraint)newComponent;
+                    newRotation.RotationAtRest = rotation.rotationAtRest;
+                    newRotation.RotationOffset = rotation.rotationOffset;
+                    newRotation.AffectsRotationX = (rotation.rotationAxis & Axis.X) != 0;
+                    newRotation.AffectsRotationY = (rotation.rotationAxis & Axis.Y) != 0;
+                    newRotation.AffectsRotationZ = (rotation.rotationAxis & Axis.Z) != 0;
+                    break;
+                case ScaleConstraint scale:
+                    var newScale = (VRCScaleConstraint)newComponent;
+                    newScale.ScaleAtRest = scale.scaleAtRest;
+                    newScale.ScaleOffset = scale.scaleOffset;
+                    newScale.AffectsScaleX = (scale.scalingAxis & Axis.X) != 0;
+                    newScale.AffectsScaleY = (scale.scalingAxis & Axis.Y) != 0;
+                    newScale.AffectsScaleZ = (scale.scalingAxis & Axis.Z) != 0;
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(constraint), constraint.GetType().Name,
+                        "Unsupported constraint type");
+            }
+
+            // finally, remove old component
+            Undo.DestroyObjectImmediate(oldConstraint);
+        }
+
+        private static VRCConstraintBase.WorldUpType ToVRChat(AimConstraint.WorldUpType aimWorldUpType)
+        {
+            switch (aimWorldUpType)
+            {
+                case AimConstraint.WorldUpType.SceneUp:
+                    return VRCConstraintBase.WorldUpType.SceneUp;
+                case AimConstraint.WorldUpType.ObjectUp:
+                    return VRCConstraintBase.WorldUpType.ObjectUp;
+                case AimConstraint.WorldUpType.ObjectRotationUp:
+                    return VRCConstraintBase.WorldUpType.ObjectRotationUp;
+                case AimConstraint.WorldUpType.Vector:
+                    return VRCConstraintBase.WorldUpType.Vector;
+                default:
+                    return VRCConstraintBase.WorldUpType.None;
+            }
+        }
+
+        #endregion
+
         class ErrorForObject
         {
             public Object obj;
             public string error;
         }
+
+        #region Reflection Util
+
+        private static readonly MethodInfo MoveComponentRelativeToComponentMethodInfo =
+            typeof(UnityEditorInternal.ComponentUtility)
+                .GetMethods(BindingFlags.NonPublic | BindingFlags.Static)
+                .First(e => e.Name == "MoveComponentRelativeToComponent" && e.GetParameters().Length == 3);
+
+        internal static void MoveComponentRelativeToComponent(Component component, Component targetComponent, bool aboveTarget)
+        {
+            MoveComponentRelativeToComponentMethodInfo.Invoke(null, new object[] { component, targetComponent, aboveTarget });
+        }
+
+        #endregion
     }
 }
