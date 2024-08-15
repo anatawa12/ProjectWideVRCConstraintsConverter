@@ -21,7 +21,7 @@ namespace Anatawa12.VRCConstraintsConverter
 
         Vector2 scrollPosition;
         Vector2 errorScrollPosition;
-        string[] assetsToConvert;
+        FindResult[] assetsToConvert;
         List<ErrorForObject> errors;
 
         TimeSpan lastSearchTime;
@@ -39,13 +39,13 @@ namespace Anatawa12.VRCConstraintsConverter
 
             EditorGUILayout.LabelField($"Last search time: {lastSearchTime}");
             scrollPosition = EditorGUILayout.BeginScrollView(scrollPosition);
-            assetsToConvert ??= Array.Empty<string>();
+            assetsToConvert ??= Array.Empty<FindResult>();
             if (assetsToConvert != null)
             {
                 foreach (var file in assetsToConvert)
                 {
                     // TODO: show in a better way (like tree view)
-                    EditorGUILayout.LabelField(file);
+                    EditorGUILayout.LabelField(file.Path);
                 }
             }
 
@@ -63,15 +63,15 @@ namespace Anatawa12.VRCConstraintsConverter
             {
                 EditorGUILayout.LabelField("No errors at this time");
             }
+
             EditorGUILayout.EndScrollView();
 
             if (GUILayout.Button("Convert Animation Clips"))
             {
-                foreach (var assetPath in assetsToConvert)
+                foreach (var asset in assetsToConvert)
                 {
-                    if (assetPath.EndsWith(".prefab")) continue;
-                    if (assetPath.EndsWith(".unity")) continue;
-                    foreach (var obj in AssetDatabase.LoadAllAssetsAtPath(assetPath))
+                    if (asset.Type != AsseetType.Asset) continue;
+                    foreach (var obj in asset.Objects)
                     {
                         if (obj is AnimationClip animationClip)
                         {
@@ -96,7 +96,8 @@ namespace Anatawa12.VRCConstraintsConverter
 
                     if (GUILayout.Button("Convert and remove old"))
                     {
-                        Undo.RecordObject(clip, "Convert Unity Constraints to VRC Constraints with removing old properties");
+                        Undo.RecordObject(clip,
+                            "Convert Unity Constraints to VRC Constraints with removing old properties");
                         ConvertAnimationClip(clip, true);
                     }
                 }
@@ -113,12 +114,34 @@ namespace Anatawa12.VRCConstraintsConverter
 
         #region Find Assets For Conversion
 
-        private static string[] FindAssetsForConversion()
+        class FindResult
+        {
+            public string Path;
+            public AsseetType Type;
+            public Object[] Objects;
+
+            public static FindResult Scene(string assetPath) => new() { Path = assetPath, Type = AsseetType.Scene };
+
+            public static FindResult Prefab(string assetPath, GameObject prefab) => new()
+                { Path = assetPath, Type = AsseetType.Prefab, Objects = new Object[] { prefab } };
+
+            public static FindResult Asset(string assetPath, Object[] assetFiles) => new()
+                { Path = assetPath, Type = AsseetType.Asset, Objects = assetFiles };
+        }
+
+        enum AsseetType
+        {
+            Scene,
+            Prefab,
+            Asset,
+        }
+
+        private static FindResult[] FindAssetsForConversion()
         {
             EditorUtility.DisplayProgressBar("Gathering files", "Finding files to convert", 0);
 
             var allAssetGUIDs = AssetDatabase.FindAssets("t:object");
-            var filesToConvert = new List<string>();
+            var filesToConvert = new List<FindResult>();
 
             try
             {
@@ -137,14 +160,14 @@ namespace Anatawa12.VRCConstraintsConverter
                         case ".unity":
                             // scene files are hard to determine if they contain constraints
                             // so we just add them to the list
-                            filesToConvert.Add(assetPath);
+                            filesToConvert.Add(FindResult.Scene(assetPath));
                             break;
                         case ".prefab":
                             // for prefab assets, we check if the prefab contains constraints
-                            if (AssetDatabase.LoadAssetAtPath<GameObject>(assetPath)
-                                .GetComponentsInChildren<IConstraint>().Any())
+                            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                            if (prefab.GetComponentsInChildren<IConstraint>().Any())
                             {
-                                filesToConvert.Add(assetPath);
+                                filesToConvert.Add(FindResult.Prefab(assetPath, prefab));
                             }
 
                             break;
@@ -153,8 +176,10 @@ namespace Anatawa12.VRCConstraintsConverter
                         case ".controller":
                         case ".mesh":
                             // for asset files, we check if the asset contains animation clips animating constraints
-                            if (AssetDatabase.LoadAllAssetsAtPath(assetPath).Any(ShouldConvertAssetFile))
-                                filesToConvert.Add(assetPath);
+                            var assetFiles = AssetDatabase.LoadAllAssetsAtPath(assetPath).Where(ShouldConvertAssetFile)
+                                .ToArray();
+                            if (assetFiles.Length > 0)
+                                filesToConvert.Add(FindResult.Asset(assetPath, assetFiles));
                             break;
                     }
                 }
@@ -262,7 +287,8 @@ namespace Anatawa12.VRCConstraintsConverter
                 // TODO: show error (or warning)
                 Debug.LogWarning($"Unsupported properties: {string.Join(", ", unsupportedProperties)}", clip);
                 errors ??= new List<ErrorForObject>();
-                errors.Add(new ErrorForObject { obj = clip, error = $"Unsupported properties: {string.Join(", ", unsupportedProperties)}" });
+                errors.Add(new ErrorForObject
+                    { obj = clip, error = $"Unsupported properties: {string.Join(", ", unsupportedProperties)}" });
             }
         }
 
@@ -364,12 +390,12 @@ namespace Anatawa12.VRCConstraintsConverter
         /*
            Those properties are properties on the VRCConstraints but not on Unity Constraints.
            If we implement back conversion, we need to make error (or warning) for those properties.
-         
+
            TargetTransform(pptr)
            SolveInLocalSpace
            FreezeToWorld
            RebakeOffsetsWhenUnfrozen
-           Locked 
+           Locked
          */
 
         static bool TryMapConstraintProperty(string propertyName, out string newPropertyName, out bool supported)
