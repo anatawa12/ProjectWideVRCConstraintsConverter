@@ -4,14 +4,17 @@ This tool is used to convert Unity constraints to VRC Constraints for all assets
 
 In the tool window, you can exclude some folders or assets from the conversion process.
 
-**This project is under development**
+## Installation
+
+1. Add anatawa12's vpm repository to your VCC, ALCOM, or other VPM client. [this][add-repo] is the link to open VCC or ALCOM.
+2. Install `Project-Wide VRC Constraints Converter` from the VCC, ALCOM, or other VPM client.
+
+[add-repo]: https://vpm.anatawa12.com/add-repo
 
 ## How to use
 
-(planned)
-
 1. Open the tool window: `Tools > Project-wide VRC Constraints Converter`
-2. Click the `Find Constraint assets` button to find all assets in your project that have Unity constraints.
+2. Click the `Search files to convert` button to find all assets in your project that have Unity constraints.
    This may take a while depending on the size of your project.
 3. See list of files that will be converted.
    If you want, you can manually exclude some files from the conversion process.
@@ -31,3 +34,9 @@ MIT License
   - This back conversion should not be project-wide, should be applied for specific assets or avatar.
 - Auto convertion with NDMF or `IVRCSDKPreprocessAvatarCallback`
   - Automatically convert constraints when building your avatar.
+
+## Notable Changes
+
+### 0.1.0
+
+Initial release
