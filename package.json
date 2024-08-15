@@ -4,6 +4,6 @@
   "displayName": "Project-Wide VRC Constraints Converter",
   "description": "Convert Unity Constraints to VRC Constraints for ALL assets in your project",
   "vpmDependencies": {
-    "com.vrchat.avatars": "1.7.0-beta.1"
+    "com.vrchat.avatars": "^3.7.0-beta.1"
   }
 }
