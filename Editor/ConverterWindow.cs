@@ -72,6 +72,21 @@ namespace Anatawa12.VRCConstraintsConverter
                         ConvertAnimationClips(callback.OnProgress);
                     }
                 }
+                
+                if (GUILayout.Button("Convert Prefabs in list below"))
+                {
+                    if (AskForBackup())
+                    {
+                        errors.Clear();
+                        Undo.IncrementCurrentGroup();
+                        var group = Undo.GetCurrentGroup();
+                        var total = assetsToConvert.Count(x => x.Type == AsseetType.Prefab);
+                        using var callback = new SimpleProgressCallback("Converting Animation Clips", total);
+                        ConvertPrefab(callback.OnProgress);
+                        Undo.CollapseUndoOperations(group);
+                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Prefabs)");
+                    }
+                }
             }
 
             DebugArea();
@@ -188,6 +203,20 @@ namespace Anatawa12.VRCConstraintsConverter
             }
         }
 
+        void ConvertPrefab(Action<string>? onProgress = null)
+        {
+            var prefabAssets = assetsToConvert.Where(x => x.Type == AsseetType.Prefab).ToArray();
+            var sorted = Utility.SortPrefabsParentToChild(prefabAssets.Select(x => x.GameObject));
+
+            foreach (var prefabAsset in sorted)
+            {
+                onProgress?.Invoke(prefabAsset.name);
+                var changed = ConvertGameObject(prefabAsset);
+                if (changed)
+                    PrefabUtility.SavePrefabAsset(prefabAsset);
+            }
+        }
+
         #region Find Assets For Conversion
 
         class FindResult
@@ -195,6 +224,8 @@ namespace Anatawa12.VRCConstraintsConverter
             public string Path;
             public AsseetType Type;
             public Object[] Objects;
+
+            public GameObject GameObject => (GameObject)Objects[0];
 
             public static FindResult Scene(string assetPath) => new() { Path = assetPath, Type = AsseetType.Scene };
 
@@ -527,11 +558,13 @@ namespace Anatawa12.VRCConstraintsConverter
 
         #region Convert Constraint Component
 
-        static void ConvertGameObject(GameObject gameObject)
+        static bool ConvertGameObject(GameObject gameObject)
         {
             Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
-            foreach (var constraint in gameObject.GetComponentsInChildren<IConstraint>())
+            var constraints = gameObject.GetComponentsInChildren<IConstraint>();
+            foreach (var constraint in constraints)
                 ConvertConstraint(constraint);
+            return constraints.Length > 0;
         }
 
         private static void ConvertConstraint(IConstraint constraint)
