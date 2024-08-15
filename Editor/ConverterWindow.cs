@@ -8,8 +8,10 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Animations;
+using UnityEngine.SceneManagement;
 using VRC.Dynamics;
 using VRC.SDK3.Dynamics.Constraint.Components;
 using Debug = UnityEngine.Debug;
@@ -27,7 +29,7 @@ namespace Anatawa12.VRCConstraintsConverter
         FindResult[] assetsToConvert = Array.Empty<FindResult>();
         List<ErrorForObject> errors = new();
 
-        bool removeUnityConstraintProperties;
+        bool removeUnityConstraintProperties = true;
 
 
         private void OnGUI()
@@ -62,14 +64,39 @@ namespace Anatawa12.VRCConstraintsConverter
                 "Remove Unity Constraint Properties from Animation Clips", removeUnityConstraintProperties);
             using (new EditorGUI.DisabledScope(assetsToConvert.Length == 0))
             {
+                if (GUILayout.Button("Convert Everything in list below"))
+                {
+                    if (AskForBackup())
+                    {
+                        errors.Clear();
+                        using var sceneRestore = new RestoreOpeningScenes();
+
+                        Undo.IncrementCurrentGroup();
+                        var group = Undo.GetCurrentGroup();
+                        var total = assetsToConvert.Length;
+                        using var callback = new SimpleProgressCallback("Converting Everything", total);
+
+                        ConvertPrefab(callback.OnProgress);
+                        ConvertScenes(callback.OnProgress);
+                        ConvertAnimationClips(callback.OnProgress);
+
+                        Undo.CollapseUndoOperations(group);
+                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Everything)");
+                    }
+                }
+
                 if (GUILayout.Button("Convert Animation Clips in list below"))
                 {
                     if (AskForBackup())
                     {
                         errors.Clear();
+                        Undo.IncrementCurrentGroup();
+                        var group = Undo.GetCurrentGroup();
                         var total = assetsToConvert.Count(x => x.Type == AsseetType.Asset);
                         using var callback = new SimpleProgressCallback("Converting Animation Clips", total);
                         ConvertAnimationClips(callback.OnProgress);
+                        Undo.CollapseUndoOperations(group);
+                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Animation Clips)");
                     }
                 }
                 
@@ -81,10 +108,27 @@ namespace Anatawa12.VRCConstraintsConverter
                         Undo.IncrementCurrentGroup();
                         var group = Undo.GetCurrentGroup();
                         var total = assetsToConvert.Count(x => x.Type == AsseetType.Prefab);
-                        using var callback = new SimpleProgressCallback("Converting Animation Clips", total);
+                        using var callback = new SimpleProgressCallback("Converting Prefabs", total);
                         ConvertPrefab(callback.OnProgress);
                         Undo.CollapseUndoOperations(group);
                         Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Prefabs)");
+                    }
+                }
+
+                if (GUILayout.Button("Convert Scenes in list below"))
+                {
+                    if (AskForBackup())
+                    {
+                        errors.Clear();
+                        using var sceneRestore = new RestoreOpeningScenes();
+
+                        Undo.IncrementCurrentGroup();
+                        var group = Undo.GetCurrentGroup();
+                        var total = assetsToConvert.Count(x => x.Type == AsseetType.Scene);
+                        using var callback = new SimpleProgressCallback("Converting Scenes", total);
+                        ConvertScenes(callback.OnProgress);
+                        Undo.CollapseUndoOperations(group);
+                        Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints (Scenes)");
                     }
                 }
             }
@@ -214,6 +258,24 @@ namespace Anatawa12.VRCConstraintsConverter
                 var changed = ConvertGameObject(prefabAsset);
                 if (changed)
                     PrefabUtility.SavePrefabAsset(prefabAsset);
+            }
+        }
+
+        void ConvertScenes(Action<string>? onProgress = null)
+        {
+            foreach (var asset in assetsToConvert)
+            {
+                if (asset.Type != AsseetType.Scene) continue;
+                onProgress?.Invoke(asset.Path);
+                var scene = EditorSceneManager.OpenScene(asset.Path, OpenSceneMode.Single);
+                
+                var rootGameObjects = scene.GetRootGameObjects();
+                var changed = false;
+                foreach (var rootGameObject in rootGameObjects)
+                    changed |= ConvertGameObject(rootGameObject);
+
+                if (changed)
+                    EditorSceneManager.SaveScene(scene);
             }
         }
 
@@ -749,6 +811,37 @@ namespace Anatawa12.VRCConstraintsConverter
             {
                 _current++;
                 EditorUtility.DisplayProgressBar(_title, obj, (float)_current / _total);
+            }
+        }
+
+        class RestoreOpeningScenes : IDisposable
+        {
+            private readonly Scene _scene;
+            private readonly string[] _openingScenePaths;
+
+            public RestoreOpeningScenes()
+            {
+                var scenes = Enumerable.Range(0, SceneManager.sceneCount).Select(SceneManager.GetSceneAt).ToArray();
+                if (scenes.Any(x => x.isDirty))
+                {
+                    if (!EditorSceneManager.SaveScenes(scenes))
+                    {
+                        throw new InvalidOperationException("Failed to save scenes");
+                    }
+                }
+                _openingScenePaths = scenes.Select(x => x.path).ToArray();
+                if (_openingScenePaths.Any(string.IsNullOrEmpty))
+                    _openingScenePaths = null;
+            }
+
+            public void Dispose()
+            {
+                if (EditorUtility.DisplayDialog("Reopen?", "Do you want to reopen previously opened scenes?", "Yes", "No"))
+                {
+                    EditorSceneManager.OpenScene(_openingScenePaths[0]);
+                    foreach (var openingScenePath in _openingScenePaths.Skip(1))
+                        EditorSceneManager.OpenScene(openingScenePath, OpenSceneMode.Additive);
+                }
             }
         }
 
