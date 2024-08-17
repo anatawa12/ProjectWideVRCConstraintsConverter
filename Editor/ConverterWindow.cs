@@ -370,7 +370,7 @@ namespace Anatawa12.VRCConstraintsConverter
                         case ".prefab":
                             // for prefab assets, we check if the prefab contains constraints
                             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-                            if (prefab.GetComponentsInChildren<IConstraint>().Any())
+                            if (prefab != null && prefab.GetComponentsInChildren<IConstraint>().Any())
                             {
                                 filesToConvert.Add(FindResult.Prefab(assetPath, prefab));
                             }
