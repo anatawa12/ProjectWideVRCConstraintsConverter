@@ -969,8 +969,8 @@ namespace Anatawa12.VRCConstraintsConverter
                         yield return assetItem.AssetInfo;
 
                     if (assetItem.children != null)
-                        foreach (var child in assetItem.children)
-                            stack.Push((AssetTreeViewItem)child);
+                        for (var index = assetItem.children.Count - 1; index >= 0; index--)
+                            stack.Push((AssetTreeViewItem)assetItem.children[index]);
                 }
             }
 
@@ -1020,26 +1020,27 @@ namespace Anatawa12.VRCConstraintsConverter
                     GetItem(asset.Path).AssetInfo = asset;
 
                 // flatten tree if only one child
-                void FlattenTree(TreeViewItem item)
+                void FlattenTree(AssetTreeViewItem item)
                 {
                     if (item.children == null) return;
                     if (item.children.Count == 1)
                     {
-                        var child = item.children[0];
+                        var child = (AssetTreeViewItem) item.children[0];
                         item.displayName += "/" + child.displayName;
                         item.children = child.children;
+                        item.AssetInfo = child.AssetInfo;
                         child.children = null;
                         FlattenTree(item);
                     }
                     else
                     {
                         foreach (var child in item.children)
-                            FlattenTree(child);
+                            FlattenTree((AssetTreeViewItem)child);
                     }
                 }
 
                 foreach (var child in root.children)
-                    FlattenTree(child);
+                    FlattenTree((AssetTreeViewItem)child);
 
                 // finally calculate depth
 

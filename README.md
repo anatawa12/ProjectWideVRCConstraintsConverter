@@ -44,3 +44,7 @@ Initial release
 ### 0.1.1
 
 Fixed error with broken prefab assets
+
+### 0.1.2
+
+Fixed some assets are not proceed correctly
