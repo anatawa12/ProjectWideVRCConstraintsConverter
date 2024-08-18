@@ -1,6 +1,6 @@
 {
   "name": "com.anatawa12.vrc-constraints-converter",
-  "version": "0.1.2",
+  "version": "0.1.3-beta.0",
   "displayName": "Project-Wide VRC Constraints Converter",
   "description": "Convert Unity Constraints to VRC Constraints for ALL assets in your project",
   "documentationUrl": "https://github.com/anatawa12/ProjectWideVRCConstraintsConverter?tab=readme-ov-file",
