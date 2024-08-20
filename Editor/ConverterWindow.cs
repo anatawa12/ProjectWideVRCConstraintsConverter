@@ -317,21 +317,28 @@ namespace Anatawa12.VRCConstraintsConverter
 
         class FindResult
         {
-            public string Path;
-            public AsseetType Type;
-            public Object[] Objects;
+            public readonly string Path;
+            public readonly AsseetType Type;
+            public readonly Object[] Objects;
+
+            private FindResult(string path, AsseetType type, Object[] objects)
+            {
+                Path = path;
+                Type = type;
+                Objects = objects;
+            }
 
             public GameObject GameObject => (GameObject)Objects[0];
 
             public bool IsConvertible => !Utility.IsInReadOnlyPackage(Path);
 
-            public static FindResult Scene(string assetPath) => new() { Path = assetPath, Type = AsseetType.Scene };
+            public static FindResult Scene(string assetPath) => new(assetPath, AsseetType.Scene, Array.Empty<Object>());
 
-            public static FindResult Prefab(string assetPath, GameObject prefab) => new()
-                { Path = assetPath, Type = AsseetType.Prefab, Objects = new Object[] { prefab } };
+            public static FindResult Prefab(string assetPath, GameObject prefab) =>
+                new(assetPath, AsseetType.Prefab, new[] { prefab });
 
-            public static FindResult Asset(string assetPath, Object[] assetFiles) => new()
-                { Path = assetPath, Type = AsseetType.Asset, Objects = assetFiles };
+            public static FindResult Asset(string assetPath, Object[] assetFiles) =>
+                new(assetPath, AsseetType.Asset, assetFiles);
         }
 
         enum AsseetType
@@ -493,8 +500,7 @@ namespace Anatawa12.VRCConstraintsConverter
                 // TODO: show error (or warning)
                 Debug.LogWarning($"Unsupported properties: {string.Join(", ", unsupportedProperties)}", clip);
                 errors ??= new List<ErrorForObject>();
-                errors.Add(new ErrorForObject
-                    { obj = clip, error = $"Unsupported properties: {string.Join(", ", unsupportedProperties)}" });
+                errors.Add(new ErrorForObject(clip, $"Unsupported properties: {string.Join(", ", unsupportedProperties)}"));;
             }
         }
 
@@ -604,7 +610,7 @@ namespace Anatawa12.VRCConstraintsConverter
            Locked
          */
 
-        static bool TryMapConstraintProperty(string propertyName, out string newPropertyName, out bool supported)
+        static bool TryMapConstraintProperty(string propertyName, out string? newPropertyName, out bool supported)
         {
             if (SimplePropertyMapping.TryGetValue(propertyName, out newPropertyName))
             {
@@ -859,8 +865,14 @@ namespace Anatawa12.VRCConstraintsConverter
 
         class ErrorForObject
         {
-            public Object obj;
-            public string error;
+            public readonly Object obj;
+            public readonly string error;
+
+            public ErrorForObject(Object obj, string error)
+            {
+                this.obj = obj;
+                this.error = error;
+            }
         }
 
         #region Reflection Util
@@ -909,7 +921,7 @@ namespace Anatawa12.VRCConstraintsConverter
         class RestoreOpeningScenes : IDisposable
         {
             private readonly Scene _scene;
-            private readonly string[] _openingScenePaths;
+            private readonly string[]? _openingScenePaths;
 
             public RestoreOpeningScenes()
             {
@@ -929,12 +941,15 @@ namespace Anatawa12.VRCConstraintsConverter
 
             public void Dispose()
             {
-                if (EditorUtility.DisplayDialog("Reopen?", "Do you want to reopen previously opened scenes?", "Yes",
-                        "No"))
+                if (_openingScenePaths != null)
                 {
-                    EditorSceneManager.OpenScene(_openingScenePaths[0]);
-                    foreach (var openingScenePath in _openingScenePaths.Skip(1))
-                        EditorSceneManager.OpenScene(openingScenePath, OpenSceneMode.Additive);
+                    if (EditorUtility.DisplayDialog("Reopen?", "Do you want to reopen previously opened scenes?", "Yes",
+                            "No"))
+                    {
+                        EditorSceneManager.OpenScene(_openingScenePaths[0]);
+                        foreach (var openingScenePath in _openingScenePaths.Skip(1))
+                            EditorSceneManager.OpenScene(openingScenePath, OpenSceneMode.Additive);
+                    }
                 }
             }
         }
@@ -945,7 +960,7 @@ namespace Anatawa12.VRCConstraintsConverter
 
         class AssetsTreeView : TreeView
         {
-            public FindResult[] Assets;
+            public FindResult[] Assets = Array.Empty<FindResult>();
 
             private const int toggleWidth = 30;
 
@@ -1015,6 +1030,9 @@ namespace Anatawa12.VRCConstraintsConverter
                     directoryTreeItems[path] = item;
                     return item;
                 }
+
+                // ensure at least one root
+                GetItem("Assets");
 
                 foreach (var asset in Assets)
                     GetItem(asset.Path).AssetInfo = asset;
