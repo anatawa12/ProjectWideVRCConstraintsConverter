@@ -377,7 +377,7 @@ namespace Anatawa12.VRCConstraintsConverter
                         case ".prefab":
                             // for prefab assets, we check if the prefab contains constraints
                             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
-                            if (prefab != null && prefab.GetComponentsInChildren<IConstraint>().Any())
+                            if (prefab != null && prefab.GetComponentsInChildren<IConstraint>(true).Any())
                             {
                                 filesToConvert.Add(FindResult.Prefab(assetPath, prefab));
                             }
@@ -666,7 +666,7 @@ namespace Anatawa12.VRCConstraintsConverter
         static bool ConvertGameObjectPhase1(GameObject gameObject)
         {
             Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
-            var constraints = gameObject.GetComponentsInChildren<IConstraint>();
+            var constraints = gameObject.GetComponentsInChildren<IConstraint>(true);
             var modified = false;
             foreach (var constraint in constraints)
                 modified |= ConvertConstraintPhase1(constraint);
@@ -676,7 +676,7 @@ namespace Anatawa12.VRCConstraintsConverter
         static bool ConvertGameObjectPhase2(GameObject gameObject)
         {
             Undo.SetCurrentGroupName("Convert Unity Constraints to VRC Constraints");
-            var constraints = gameObject.GetComponentsInChildren<IConstraint>();
+            var constraints = gameObject.GetComponentsInChildren<IConstraint>(true);
             foreach (var constraint in constraints)
             {
                 if (!PrefabUtility.IsPartOfPrefabInstance((Component)constraint))
